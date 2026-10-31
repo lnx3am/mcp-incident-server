@@ -134,6 +134,34 @@ def test_concurrent_note_writes_consume_approval_once(tmp_path):
         assert db.execute("SELECT used FROM approvals").fetchall() == [(1,)]
 
 
+def test_failed_note_commit_rolls_back_note_and_approval(tmp_path, monkeypatch):
+    repo = Incidents(str(tmp_path / "incidents.db"))
+    with sqlite3.connect(repo.path) as db:
+        db.execute("INSERT INTO incidents(id,title) VALUES (7,'API latency')")
+    token = repo.approve_note(7, "Rollback completed", "reviewer")
+    connect = sqlite3.connect
+    # A reader permits the write statements but prevents their transaction from committing.
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", lambda *args, **kwargs: connect(
+            *args, **{**kwargs, "timeout": 0}))
+        with connect(repo.path) as reader:
+            reader.execute("BEGIN")
+            reader.execute("SELECT * FROM notes").fetchall()
+            with pytest.raises(sqlite3.OperationalError) as exc:
+                repo.add_note(7, "Rollback completed", "reviewer", token)
+            assert exc.value.sqlite_errorcode == sqlite3.SQLITE_BUSY
+        with connect(repo.path) as db:
+            assert db.execute("SELECT used FROM approvals").fetchall() == [(0,)]
+            assert db.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+    assert repo.add_note(7, "Rollback completed", "reviewer", token) > 0
+    with pytest.raises(ValueError, match="reused"):
+        repo.add_note(7, "Rollback completed", "reviewer", token)
+    with connect(repo.path) as db:
+        assert db.execute("SELECT used FROM approvals").fetchall() == [(1,)]
+        assert db.execute("SELECT incident_id,body,actor FROM notes").fetchall() == [
+            (7, "Rollback completed", "reviewer")]
+
+
 def test_approval_and_consumption_survive_repository_restart(tmp_path):
     path = str(tmp_path / "incidents.db")
     repo = Incidents(path)
