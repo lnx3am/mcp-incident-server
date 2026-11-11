@@ -8,6 +8,32 @@ import pytest
 from mcp_incident_server.server import Incidents
 
 
+def test_locked_database_preserves_note_approval_and_allows_retry(tmp_path, monkeypatch):
+    repo = Incidents(str(tmp_path / "incidents.db"))
+    with sqlite3.connect(repo.path) as db:
+        db.execute("INSERT INTO incidents(id,title) VALUES (7,'API latency')")
+    token = repo.approve_note(7, "Rollback completed", "reviewer")
+    connect = sqlite3.connect
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", lambda *args, **kwargs: connect(
+            *args, **{**kwargs, "timeout": 0}))
+        with connect(repo.path) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            with pytest.raises(sqlite3.OperationalError) as exc:
+                repo.add_note(7, "Rollback completed", "reviewer", token)
+            assert exc.value.sqlite_errorcode == sqlite3.SQLITE_BUSY
+        with connect(repo.path) as db:
+            assert db.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+            assert db.execute("SELECT used FROM approvals").fetchall() == [(0,)]
+    note_id = repo.add_note(7, "Rollback completed", "reviewer", token)
+    with connect(repo.path) as db:
+        assert db.execute("SELECT id,incident_id,body,actor FROM notes").fetchall() == [
+            (note_id, 7, "Rollback completed", "reviewer")]
+        assert db.execute("SELECT used FROM approvals").fetchall() == [(1,)]
+    with pytest.raises(ValueError, match="reused"):
+        repo.add_note(7, "Rollback completed", "reviewer", token)
+
+
 def test_approval_bound_and_single_use(tmp_path):
     repo = Incidents(str(tmp_path / "incidents.db"))
     with sqlite3.connect(repo.path) as db:
