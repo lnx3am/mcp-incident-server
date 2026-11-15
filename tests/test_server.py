@@ -34,6 +34,27 @@ def test_locked_database_preserves_note_approval_and_allows_retry(tmp_path, monk
         repo.add_note(7, "Rollback completed", "reviewer", token)
 
 
+def test_identical_note_approvals_are_consumed_independently(tmp_path):
+    repo = Incidents(str(tmp_path / "incidents.db"))
+    with sqlite3.connect(repo.path) as db:
+        db.execute("INSERT INTO incidents(id,title) VALUES (7,'API latency')")
+    tokens = [repo.approve_note(7, "Rollback completed", "reviewer") for _ in range(2)]
+    assert tokens[0] != tokens[1]
+    first = repo.add_note(7, "Rollback completed", "reviewer", tokens[0])
+    with pytest.raises(ValueError, match="reused"):
+        repo.add_note(7, "Rollback completed", "reviewer", tokens[0])
+    with sqlite3.connect(repo.path) as db:
+        assert db.execute("SELECT used FROM approvals ORDER BY rowid").fetchall() == [(1,), (0,)]
+    second = repo.add_note(7, "Rollback completed", "reviewer", tokens[1])
+    assert first != second
+    with sqlite3.connect(repo.path) as db:
+        assert db.execute("SELECT used FROM approvals").fetchall() == [(1,), (1,)]
+        assert db.execute("SELECT id,incident_id,body,actor FROM notes ORDER BY id").fetchall() == [
+            (first, 7, "Rollback completed", "reviewer"),
+            (second, 7, "Rollback completed", "reviewer"),
+        ]
+
+
 def test_approval_bound_and_single_use(tmp_path):
     repo = Incidents(str(tmp_path / "incidents.db"))
     with sqlite3.connect(repo.path) as db:
