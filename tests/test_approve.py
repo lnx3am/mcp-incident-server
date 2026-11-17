@@ -6,6 +6,38 @@ from mcp_incident_server.approve import main
 from mcp_incident_server.server import Incidents
 
 
+@pytest.mark.parametrize("failure", ["directory", "parent_file", "corrupt", "approval_write"])
+def test_database_failure_is_usage_error_without_printing_token(
+    tmp_path, monkeypatch, capsys, failure,
+):
+    path = tmp_path / "incidents.db"
+    if failure == "directory":
+        path.mkdir()
+    elif failure == "parent_file":
+        path.write_text("not a directory")
+        path = path / "incidents.db"
+    elif failure == "corrupt":
+        path.write_text("not a SQLite database")
+    else:
+        Incidents(str(path))
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO incidents(id,title) VALUES (7,'API latency')")
+            db.execute("CREATE TRIGGER fail_approval BEFORE INSERT ON approvals "
+                       "BEGIN SELECT RAISE(ABORT, 'approval storage unavailable'); END")
+    monkeypatch.setattr("sys.argv", ["approve", "--db", str(path), "--incident-id", "7",
+                                    "--body", "Recovery confirmed", "--actor", "reviewer"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "cannot access approval database" in captured.err
+    assert "Traceback" not in captured.err
+    if failure == "approval_write":
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT COUNT(*) FROM approvals").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("body,actor", [("", "reviewer"), ("   ", "reviewer"),
                                       ("x" * 1001, "reviewer"), ("Valid note", ""),
                                       ("Valid note", " ")])
