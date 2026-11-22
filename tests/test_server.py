@@ -8,6 +8,15 @@ import pytest
 from mcp_incident_server.server import Incidents
 
 
+@pytest.mark.parametrize("token", ["", " \t\n"])
+def test_blank_repository_token_is_rejected_before_database_access(tmp_path, monkeypatch, token):
+    repo = Incidents(str(tmp_path / "incidents.db"))
+    monkeypatch.setattr(sqlite3, "connect",
+                        lambda *args, **kwargs: pytest.fail("blank token must not access SQLite"))
+    with pytest.raises(ValueError, match="approval token cannot be blank"):
+        repo.add_note(7, "Recovery confirmed", "reviewer", token)
+
+
 def test_approval_bound_and_single_use(tmp_path):
     repo = Incidents(str(tmp_path / "incidents.db"))
     with sqlite3.connect(repo.path) as db:
