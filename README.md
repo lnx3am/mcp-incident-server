@@ -39,7 +39,7 @@ MCP is the interoperability layer; validation and authorization remain applicati
 
 ## Trade-offs, limitations, and next production steps
 
-The approval token is bound to the proposed note but is still a bearer secret. Anyone with local shell access can run the operator command, so this is a demonstration of the control flow rather than production authentication. A real service needs authenticated approvers, roles, expiry, token delivery outside model context, per-tool scopes, audit event IDs, rate limits, and MCP protocol integration tests. Keep secrets out of tool responses and traces. A remote MCP transport would also need TLS and authentication.
+The approval token is bound to the proposed note but is still a bearer secret. Anyone with local shell access can run the operator command, so this is a demonstration of the control flow rather than production authentication. A real service needs authenticated approvers, roles, expiry, token delivery outside model context, per-tool scopes, audit event IDs, and rate limits. Keep secrets out of tool responses and traces. A remote MCP transport would also need TLS and authentication.
 
 ## Interview preparation
 
@@ -48,3 +48,4 @@ Explain tool discovery, why MCP does not grant trust, the difference between rea
 ## Verify
 
 Run `python -m pytest -q` and `python -m ruff check .` from this repository.
+The suite includes a real stdio client/server round trip covering initialization, tool discovery, incident listing, approval validation, note creation, and rejection of token reuse.
